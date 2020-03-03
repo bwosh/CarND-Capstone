@@ -12,13 +12,18 @@ import cv2
 import yaml
 import torch
 import time
+import numpy as np
 
 from transforms import decode_results
 from dla import get_pose_net
+from cls_model import ClassifierNet
 
 class TLDetector(object):
     def __init__(self):
         rospy.loginfo("Initializing TLDetector")
+        self.frame_id = 0
+        self.history = []
+        self.is_red = False
 
         # ROS declarations
         rospy.init_node('tl_detector', )
@@ -32,6 +37,8 @@ class TLDetector(object):
         # Read config
         config_string = rospy.get_param("/traffic_light_config")
         self.config = yaml.load(config_string)
+        self.device = self.config['device']
+        device = torch.device(self.device)
 
         # Detector model
         self.detector_max_frequency = self.config['detector_max_frequency']
@@ -40,37 +47,51 @@ class TLDetector(object):
         self.skipped_from_last = 0
 
         self.K = self.config['max_detections']
-        self.device = self.config['device']
-        device = torch.device(self.device)
+
         rospy.loginfo("Loading detecor model...")
         self.model = get_pose_net(34, heads={'hm': 1, 'wh': 2}, head_conv=-1).to(self.device)
-
         state_dict = torch.load("./data/detector.pth", map_location=device)
         self.model.load_state_dict(state_dict)
-        self.model  = self.model.to(self.device)
+        self.model = self.model.to(self.device)
         rospy.loginfo("Loaded detecor model.")
 
+        # Classifier model
+        rospy.loginfo("Loading clasification model...")
+        self.min_red_light_size = self.config['min_red_light_size']
+        self.light_change_history_length = self.config['light_change_history_length']
+        self.cmodel = ClassifierNet()
+        state_dict = torch.load("./data/classifier.pth", map_location=device)
+        self.cmodel.load_state_dict(state_dict)
+        self.cmodel  = self.cmodel.to(self.device)
+        rospy.loginfo("Loaded clasification model.")
+
+        # Run!
         rospy.spin()
 
     def image_cb(self, msg):
         self.has_image = True
         now = time.time()
         if 1/(now-self.last_time)<=self.detector_max_frequency:
-            rospy.loginfo("TLDetector: Analysing new frame... Skipped frames:"+str(self.skipped_from_last))
             self.skipped_from_last=0
             self.camera_image = msg
             self.last_time = now
-            state = self.is_red_light_visible()
+            is_red_light, time_ms, detections, clsval = self.is_red_light_visible()
+            rospy.loginfo("Time(ms):"+str(int(time_ms)) + 
+                " Red?:"+str(is_red_light)+
+                " Detections:"+str(detections)+
+                " Classificiations:"+str(clsval))
+            self.frame_id += 1
         else:
             self.skipped_from_last+=1
 
     def preapre_tensor(self, cv_image):
         cv_image = cv2.resize(cv_image, (512,512))
+        resized = cv_image.copy()
         cv_image = (cv_image / 255.0)
         cv_image = cv_image.transpose(2,0,1)
 
         input = torch.tensor(cv_image, dtype=torch.float).unsqueeze(0)
-        return input
+        return input, resized
 
     def detect(self, input):
         output = self.model.forward(input)[0]   
@@ -81,13 +102,41 @@ class TLDetector(object):
         dets = decode_results(output_hm, output_wh, self.K)[0]
         return dets
 
+    def clip(self, val):
+        if val<0:
+            return 0
+        if val>511:
+            return 511
+        return val
+
     def classify(self, input, bbox):
-        # TODO
-        #x1,y1,x2,y2 = bbox
-        result = False
-        rospy.loginfo("CLS:"+str(bbox))
-        rospy.loginfo("Is red light visible: "+str(result))
-        return result
+        x1,y1,x2,y2 = bbox
+        x1,y1,x2,y2 = self.clip(int(4*x1)),self.clip(int(4*y1)),self.clip(int(4*x2)),self.clip(int(4*y2) )
+
+        if x2-x1<=self.min_red_light_size or y2-y1<=self.min_red_light_size:
+            return False
+
+        fname = "./data/temp/"+str(self.frame_id)+"_pre.png"
+        cv2.imwrite(fname, input)
+        input = input[y1:y2,x1:x2,:].copy()
+        fname = "./data/temp/"+str(self.frame_id)+".png"
+        cv2.imwrite(fname, input)
+        input_copy = input.copy()
+        input = cv2.resize(input,(32,32))
+
+        input= input - 0.5
+        input = (input / 255.0) - 0.5
+        input = input.transpose(2,0,1)
+        input = torch.tensor(input, dtype=torch.float).unsqueeze(0)
+
+        result = (self.cmodel(input)[0]).cpu().detach().numpy()
+
+        fname = "./data/temp/"+str(self.frame_id)+"_"+str(result[0])+"_"+str(result[1])+".png"
+        result_val = np.exp(result[1])/(np.exp(result[0])+np.exp(result[1]))
+        result = result[0]<=result[1]
+        cv2.imwrite(fname, input_copy)
+
+        return result, result_val
         
     def is_red_light_visible(self):
         if(not self.has_image):
@@ -97,22 +146,28 @@ class TLDetector(object):
         cv_image = self.bridge.imgmsg_to_cv2(self.camera_image, "bgr8")
 
         original_shape = cv_image.shape
-        cv_image = self.preapre_tensor(cv_image)
+        cv_image, cv_resized = self.preapre_tensor(cv_image)
         detections = self.detect(cv_image)
 
         red_lights_colors = [False]
         scores = detections['scores']
         bboxes = detections['bboxes']
+        cls_vals = []
         for di,_ in enumerate(detections):
             if scores[di] > self.detection_threshold:
-                classification_result = self.classify(cv_image, bboxes[di])
+                classification_result, cls_val = self.classify(cv_resized, bboxes[di])
                 red_lights_colors.append(classification_result)
-        is_red = any(red_lights_colors)
+                cls_vals.append(cls_val)
+        light_state = any(red_lights_colors)
+        self.history.append(light_state)
+        self.history = self.history[-self.light_change_history_length:]
+        
+        if all([h==self.history[-1] for h in self.history]):
+            self.is_red = self.history[-1]
 
         time_b = time.time()
         elapsed_ms = 1000.0 * (time_b-time_a)
-        rospy.loginfo("Traffic Lights Execution time(ms):"+str(elapsed_ms))
-        return is_red
+        return self.is_red, elapsed_ms, len(detections), cls_vals
 
 
 if __name__ == '__main__':
