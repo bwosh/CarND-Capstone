@@ -5,3 +5,5 @@ devel
 
 profile.tmp
 .vscode/settings.json
+**/temp/*.png
+**/.*
