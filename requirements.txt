@@ -8,3 +8,5 @@ scipy==0.19.1
 keras==2.0.8
 h5py==2.6.0
 torch==1.0.0
+rospkg==1.2.3
+opencv-python==3.2.0.6
