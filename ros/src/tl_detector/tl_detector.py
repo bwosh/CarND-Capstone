@@ -1,22 +1,19 @@
 #!/usr/bin/env python
 import rospy
+
 from std_msgs.msg import Int32
 from geometry_msgs.msg import PoseStamped, Pose
 from styx_msgs.msg import TrafficLightArray, TrafficLight
 from styx_msgs.msg import Lane
 from sensor_msgs.msg import Image
+
 from cv_bridge import CvBridge
 from light_classification.tl_classifier import TLClassifier
-import tf
+
 import cv2
 import yaml
-import torch
 import time
 import numpy as np
-
-from transforms import decode_results
-from dla import get_pose_net
-from cls_model import ClassifierNet
 
 class TLDetector(object):
     def __init__(self):
@@ -37,34 +34,33 @@ class TLDetector(object):
         # Read config
         config_string = rospy.get_param("/traffic_light_config")
         self.config = yaml.load(config_string)
-        self.device = self.config['device']
-        device = torch.device(self.device)
+
 
         # Detector model
         self.detector_max_frequency = self.config['detector_max_frequency']
-        self.detection_threshold = self.config['detection_threshold']
+        #self.detection_threshold = self.config['detection_threshold']
         self.last_time = -1
         self.skipped_from_last = 0
 
-        self.K = self.config['max_detections']
+        #self.K = self.config['max_detections']
 
-        rospy.loginfo("Loading detecor model...")
-        self.model = get_pose_net(34, heads={'hm': 1, 'wh': 2}, head_conv=-1).to(self.device)
-        state_dict = torch.load("./data/detector.pth", map_location=device)
-        self.model.load_state_dict(state_dict)
-        self.model = self.model.to(self.device)
-        rospy.loginfo("Loaded detecor model.")
+        #rospy.loginfo("Loading detecor model...")
+        #self.model = get_pose_net(34, heads={'hm': 1, 'wh': 2}, head_conv=-1).to(self.device)
+        #state_dict = torch.load("./data/detector.pth", map_location=device)
+        #self.model.load_state_dict(state_dict)
+        #self.model = self.model.to(self.device)
+        #rospy.loginfo("Loaded detecor model.")
 
         # Classifier model
-        rospy.loginfo("Loading clasification model...")
-        self.min_red_light_size = self.config['min_red_light_size']
-        self.red_light_threshold = self.config['red_light_threshold']
+        #rospy.loginfo("Loading clasification model...")
+        #self.min_red_light_size = self.config['min_red_light_size']
+        #self.red_light_threshold = self.config['red_light_threshold']
         self.light_change_history_length = self.config['light_change_history_length']
-        self.cmodel = ClassifierNet()
-        state_dict = torch.load("./data/classifier.pth", map_location=device)
-        self.cmodel.load_state_dict(state_dict)
-        self.cmodel  = self.cmodel.to(self.device)
-        rospy.loginfo("Loaded clasification model.")
+        #self.cmodel = ClassifierNet()
+        #state_dict = torch.load("./data/classifier.pth", map_location=device)
+        #self.cmodel.load_state_dict(state_dict)
+        #self.cmodel  = self.cmodel.to(self.device)
+        #rospy.loginfo("Loaded clasification model.")
 
         # Run!
         rospy.spin()
@@ -101,21 +97,24 @@ class TLDetector(object):
             self.skipped_from_last+=1
 
     def preapre_tensor(self, cv_image):
-        cv_image = cv2.resize(cv_image, (512,512))
+        cv_image = cv2.resize(cv_image, (416,416))
         resized = cv_image.copy()
         cv_image = (cv_image / 255.0)
-        cv_image = cv_image.transpose(2,0,1)
 
-        input = torch.tensor(cv_image, dtype=torch.float).unsqueeze(0)
-        return input, resized
+        return cv_image, resized
 
     def detect(self, input):
-        output = self.model.forward(input.to(self.device))[0]   
-        output_hm = output['hm']
-        output_wh = output['wh']
+        #output = self.model.forward(input.to(self.device))[0]   
+        #output_hm = output['hm']
+        #output_wh = output['wh']
 
         # Decode results
-        dets = decode_results(output_hm, output_wh, self.K)[0]
+        #dets = decode_results(output_hm, output_wh, self.K)[0]
+
+        dets = {
+            'scores': [],
+            'bboxes': []
+        }
         return dets
 
     def clip(self, val):
@@ -139,13 +138,14 @@ class TLDetector(object):
         input= input - 0.5
         input = (input / 255.0) - 0.5
         input = input.transpose(2,0,1)
-        input = torch.tensor(input, dtype=torch.float).unsqueeze(0)
+        #input = torch.tensor(input, dtype=torch.float).unsqueeze(0)
 
-        result = (self.cmodel(input.to(self.device))[0]).cpu().detach().numpy()
-        result_val = np.exp(result[1])/(np.exp(result[0])+np.exp(result[1]))
-        result = result_val>self.red_light_threshold
+        #result = (self.cmodel(input.to(self.device))[0]).cpu().detach().numpy()
+        #result_val = np.exp(result[1])/(np.exp(result[0])+np.exp(result[1]))
+        #result = result_val>self.red_light_threshold
 
-        return result, result_val
+        #return result, result_val
+        return False, 0.0
         
     def is_red_light_visible(self):
         if(not self.has_image):
@@ -162,7 +162,7 @@ class TLDetector(object):
         scores = detections['scores']
         bboxes = detections['bboxes']
         cls_vals = []
-        for di,_ in enumerate(detections):
+        for di,_ in enumerate(scores):
             if scores[di] > self.detection_threshold:
                 classification_result, cls_val = self.classify(cv_resized, bboxes[di])
                 red_lights_colors.append(classification_result)
