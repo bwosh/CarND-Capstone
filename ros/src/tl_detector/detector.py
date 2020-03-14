@@ -7,6 +7,7 @@ from keras import backend as K
 from keras.layers import Input
 from keras.models import load_model
 from PIL import Image
+from tensorflow import Graph
 
 from model import yolo_eval, tiny_yolo_body
 
@@ -48,21 +49,25 @@ class TrafficLightsDetector():
 
         config = tf.ConfigProto(gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.5))
         config.gpu_options.allow_growth = True
-        self.session = tf.Session(config=config)
 
-        self.sess = K.get_session()
-        self.K_learning_phase = K.learning_phase()
 
-        # Preprare model
-        anchors = get_anchors(anchors_path)
-        classes = get_class(classes_path)
-        self.model= tiny_yolo_body(Input(shape=(None,None,3)), len(anchors)//2, len(classes))
-        self.model.load_weights(model_path) 
+        self.graph = Graph()
+        with self.graph.as_default():
+            self.session = tf.Session(config=config)
+            with self.session.as_default():
+                self.sess = K.get_session()
+                self.K_learning_phase = K.learning_phase()
 
-        # Prepare placeholders
-        self.input_image_shape = K.placeholder(shape=(2, ))
-        self.ph_boxes, self.ph_scores, self.ph_classes = yolo_eval(self.model.output, anchors, len(classes), (416,416), 
-                                        score_threshold=score_threshold, iou_threshold=iou_threshold)
+                # Preprare model
+                anchors = get_anchors(anchors_path)
+                classes = get_class(classes_path)
+                self.model= tiny_yolo_body(Input(shape=(None,None,3)), len(anchors)//2, len(classes))
+                self.model.load_weights(model_path) 
+
+                # Prepare placeholders
+                self.input_image_shape = K.placeholder(shape=(2, ))
+                self.ph_boxes, self.ph_scores, self.ph_classes = yolo_eval(self.model.output, anchors, len(classes), (416,416), 
+                                                score_threshold=score_threshold, iou_threshold=iou_threshold)
 
     def detect_lights(self, cv2_image_bgr):
         # Image pre-processing
@@ -71,13 +76,15 @@ class TrafficLightsDetector():
         image_data /= 255.
         image_data = np.expand_dims(image_data, 0) 
 
-        out_boxes, out_scores, out_classes = self.sess.run(
-            [self.ph_boxes, self.ph_scores, self.ph_classes],
-            feed_dict={
-                self.model.input: image_data,
-                self.input_image_shape: [416, 416],
-                self.K_learning_phase: 0
-            })
+        with self.graph.as_default():
+            with self.session.as_default():
+                out_boxes, out_scores, out_classes = self.sess.run(
+                    [self.ph_boxes, self.ph_scores, self.ph_classes],
+                    feed_dict={
+                        self.model.input: image_data,
+                        self.input_image_shape: [416, 416],
+                        self.K_learning_phase: 0
+                    })
 
         # Preparing final result
         result = []

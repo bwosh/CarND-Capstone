@@ -1,4 +1,4 @@
-detector_max_frequency: 4
+detector_max_frequency: 8
 detection_threshold: 0.3
 detection_iou: 0.45
 min_red_light_size: 4

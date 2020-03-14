@@ -15,6 +15,7 @@ import cv2
 import yaml
 import time
 import numpy as np
+import tensorflow as tf
 
 class TLDetector(object):
     def __init__(self):
@@ -45,7 +46,6 @@ class TLDetector(object):
 
         self.last_time = -1
         self.skipped_from_last = 0
-
 
         # Detector model
         self.detector = TrafficLightsDetector(score_threshold =  self.detection_threshold, 
@@ -111,7 +111,7 @@ class TLDetector(object):
 
     def classify(self, input, bbox):
         x1,y1,x2,y2 = bbox
-        x1,y1,x2,y2 = self.clip(int(4*x1)),self.clip(int(4*y1)),self.clip(int(4*x2)),self.clip(int(4*y2) )
+        x1,y1,x2,y2 = self.clip(int(x1)),self.clip(int(y1)),self.clip(int(x2)),self.clip(int(y2) )
 
         if x2-x1<=self.min_red_light_size or y2-y1<=self.min_red_light_size:
             return False, 0.0
@@ -126,12 +126,9 @@ class TLDetector(object):
         input_copy = (input_copy / 255.0) 
         input_copy = np.expand_dims(input_copy, axis=0)
 
-        result = self.classifier.classify(input_copy)
 
-        rospy.loginfo(str(result))
-        # TODO
-
-        return False, 0.0
+        result = self.classifier.classify(input_copy)[00]
+        return result>self.red_light_threshold, result
         
     def is_red_light_visible(self):
         if(not self.has_image):
@@ -140,7 +137,6 @@ class TLDetector(object):
         time_a = time.time()
         cv_image = self.bridge.imgmsg_to_cv2(self.camera_image, "bgr8")
 
-        original_shape = cv_image.shape
         cv_resized, detections = self.detect(cv_image)
 
         red_lights_colors = [False]
@@ -152,7 +148,7 @@ class TLDetector(object):
                 classification_result, cls_val = self.classify(cv_resized, bboxes[di])
                 red_lights_colors.append(classification_result)
                 cls_vals.append(cls_val)
-                pass
+        cv2.imwrite('temp.jpg', cv_resized)
         light_state = any(red_lights_colors)
         self.history.append(light_state)
         self.history = self.history[-self.light_change_history_length:]
