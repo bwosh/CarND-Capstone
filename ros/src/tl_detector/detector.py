@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 import os
+import tensorflow as tf
 
 from keras import backend as K
 from keras.layers import Input
@@ -44,6 +45,11 @@ class TrafficLightsDetector():
         self.SELECTED_CLASS = 9
 
         # Start session
+
+        config = tf.ConfigProto(gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.5))
+        config.gpu_options.allow_growth = True
+        self.session = tf.Session(config=config)
+
         self.sess = K.get_session()
         self.K_learning_phase = K.learning_phase()
 

@@ -9,6 +9,7 @@ from sensor_msgs.msg import Image
 
 from cv_bridge import CvBridge
 from detector import TrafficLightsDetector
+from classifier import LightClassifier
     
 import cv2
 import yaml
@@ -51,7 +52,7 @@ class TLDetector(object):
                                               iou_threshold = self.detection_iou)
 
         # Classifier model
-        # TODO
+        self.classifier = LightClassifier()
 
         # Run!
         rospy.spin()
@@ -123,7 +124,11 @@ class TLDetector(object):
         input_copy = input.copy()
         input_copy = cv2.resize(input_copy,(32,32))
         input_copy = (input_copy / 255.0) 
+        input_copy = np.expand_dims(input_copy, axis=0)
 
+        result = self.classifier.classify(input_copy)
+
+        rospy.loginfo(str(result))
         # TODO
 
         return False, 0.0
