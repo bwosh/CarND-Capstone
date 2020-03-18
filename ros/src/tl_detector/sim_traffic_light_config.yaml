@@ -1,6 +1,9 @@
-camera_info:
-  image_width: 800
-  image_height: 600
+detector_max_frequency: 8
+detection_threshold: 0.3
+detection_iou: 0.45
+min_red_light_size: 4
+light_change_history_length: 2
+red_light_threshold: 0.5
 stop_line_positions:
     - [1148.56, 1184.65]
     - [1559.2, 1158.43]
@@ -10,4 +13,3 @@ stop_line_positions:
     - [821.96, 2905.8]
     - [161.76, 2303.82]
     - [351.84, 1574.65]
-is_site: False
